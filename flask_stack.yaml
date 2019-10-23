@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Flask service
+Parameters:
+  FlaskImageTag:
+    Type: String
+  Memory:
+    Type: String
+  Cpu:
+    Type: String
+Resources:
+  Service:
+    Type: "AWS::ECS::Service"
+    Properties:
+      Cluster: !ImportValue FlaskCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      LoadBalancers:
+        - ContainerName: !Join ['-', [!Join ['-', !Split ['.', !ImportValue FlaskDomain]], 'task']]
+          ContainerPort: 80
+          TargetGroupArn: !ImportValue FlaskTargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - !ImportValue FlaskContainerSecurityGroup
+          Subnets: !Split [',', !ImportValue FlaskPrivateSubnets]
+      TaskDefinition: !Ref TaskDefinition
+
+
+  TaskDefinition:
+    Type: "AWS::ECS::TaskDefinition"
+    Properties:
+      ContainerDefinitions:
+      -
+        Environment:
+        - Name: APP_NAME
+          Value: !ImportValue FlaskDomain
+        Essential: 'true'
+        Image: !Join ['', [!Ref 'AWS::AccountId',
+                           ".dkr.ecr.",
+                           !Ref 'AWS::Region',
+                           '.amazonaws.com/',
+                           !ImportValue FlaskDomain,
+                           ":",
+                           !Ref FlaskImageTag]]
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: !ImportValue FlaskLogGroup
+            awslogs-region: !Ref 'AWS::Region'
+            awslogs-stream-prefix: task
+        Name: !Join ['-', [!Join ['-', !Split ['.', !ImportValue FlaskDomain]], 'task']]
+        PortMappings:
+        - ContainerPort: 80
+        Privileged: 'false'
+      Family: !Join ['-', [!Join ['-', !Split ['.', !ImportValue FlaskDomain]], 'family']]
+      Cpu: !Ref Cpu
+      Memory: !Ref Memory
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !ImportValue FlaskTaskExecutionRole
+      TaskRoleArn: !GetAtt 'TaskRole.Arn'
+      RequiresCompatibilities:
+        - FARGATE
+
+
+  TaskRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - ecs-tasks.amazonaws.com
+      Policies:
+      - PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Action:
+            - dynamodb:*
+            Effect: Allow
+            Resource:
+            - "*"
+        PolicyName: DynamoDBPermissions
+    Type: AWS::IAM::Role
